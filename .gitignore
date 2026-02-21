@@ -1,0 +1,6 @@
+.terraform
+*.tfvars
+*.tfvars.json
+*.tfstate
+*.tfstate.*
+inventory.ini
