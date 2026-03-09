@@ -51,6 +51,7 @@ int main()
     struct sockaddr_in target;
     target.sin_family = AF_INET;
     target.sin_port = htons(9999);
+    // TODO: need to replace this for target ip with env var
     inet_pton(AF_INET, "127.0.0.1", &target.sin_addr);
 
     // 5. build the IP Header

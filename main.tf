@@ -1,42 +1,28 @@
-# 1. The 'null_resource' block.
-# In a cloud module, this would be 'aws_instance'.
-# Here, we use a placeholder resource to attach our connection logic.
-resource "null_resource" "vm_provisioner" {
+# Secret rotation (GCIH Preparation — optional for verify, but included)
+resource "time_rotating" "key_rotation" {
+  rotation_days = 1
+}
 
-  # Connection Block: Tells Terraform how to communicate with the host.
-  # This replaces the Cloud API authentication.
-  connection {
-    type        = "ssh"
-    user        = var.ssh_user
-    host        = var.vm_ip
-    timeout     = "2m"
-    agent = true
-  }
+# Example IAM for a service (stub for your Lambda/backend later)
+resource "aws_iam_user" "service" {
+  name = "fortress-service"
+}
 
-  provisioner "file" {
-    source = "${path.module}/scripts/setup.sh"
-    destination = "/tmp/setup.sh"
-  }
-  # Provisioner: remote-exec
-  # This runs commands ON THE VM. It simulates 'User Data' in AWS.
-  provisioner "remote-exec" {
-    inline = [
-      "chmod +x /tmp/setup.sh",
-      "echo '${var.maru}' | sudo -S /tmp/setup.sh"
-    ]
-  }
-
-  # Triggers: Ensure this runs if we change specific variables.
-  triggers = {
-    target_ip = var.vm_ip
-    # Uncomment the line below to force it to run every single time
-    # always_run = "${timestamp()}"
+resource "aws_iam_access_key" "rotating" {
+  user = aws_iam_user.service.name
+  lifecycle {
+    replace_triggered_by  = [time_rotating.key_rotation.id]
+    create_before_destroy = true
   }
 }
 
-# 2. Local File Resource
-# Creates an 'inventory' file on your Mac, useful for later automation.
-resource "local_file" "ansible_inventory" {
-  content  = "[webservers]\n${var.vm_ip} ansible_user=${var.ssh_user}"
-  filename = "${path.module}/inventory.ini"
+# Reverse Proxy Module Call
+module "reverse_proxy" {
+  source         = "./modules/rev-prox"
+  backend_target = "http://your-backend-internal:8080" # Placeholder; update for verify (e.g., echo server)
+}
+
+# Outputs
+output "nginx_public_ip" {
+  value = module.reverse_proxy.nginx_public_ip
 }
