@@ -1,0 +1,11 @@
+project_id      = "my-gcp-project"
+domain_name     = "api.example.com"
+container_image = "us-west2-docker.pkg.dev/my-gcp-project/api/go-api:latest"
+
+# Optional overrides (defaults are cost-optimized):
+# region                  = "us-west2"
+# deployment_name         = "go-api"
+# db_tier                 = "db-f1-micro"
+# cloud_run_min_instances = 0
+# cloud_run_max_instances = 10
+# cloud_armor_rate_limit  = 100
