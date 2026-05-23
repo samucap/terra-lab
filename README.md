@@ -1,1 +1,1 @@
-# configurable scripts for automation and security management
+# configurable scripts for automation and management

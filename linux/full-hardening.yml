@@ -1,0 +1,75 @@
+---
+- name: Full Linux Hardening Playbook (Evolution of Your Original Script)
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update and upgrade system
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+
+    - name: Install security packages
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - lynis
+          - unattended-upgrades
+          - apparmor
+          - curl
+        state: present
+
+    - name: Create worker user (samworker)
+      user:
+        name: samworker
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Give sudo privileges without password
+      copy:
+        content: "samworker ALL=(ALL) NOPASSWD:ALL"
+        dest: /etc/sudoers.d/samworker
+        mode: "0440"
+
+    - name: Disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+        state: present
+
+    - name: Disable password authentication (key only)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
+        state: present
+
+    - name: Setup UFW firewall
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        from_ip: "192.168.1.6/24" # ← Change to your local network
+      notify: Enable UFW
+
+    - name: Enable Fail2Ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: Run Lynis baseline audit
+      command: lynis audit system --quiet --logfile /var/log/lynis-build.log
+      changed_when: false
+
+  handlers:
+    - name: Enable UFW
+      command: ufw --force enable
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+
