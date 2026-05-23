@@ -19,11 +19,11 @@ source "vmware-iso" "ubuntu" {
   cpus                 = 4
   memory               = 8192
   disk_size            = 20480
+  disk_adapter_type    = "pvscsi"
   ssh_username         = "samworker"
   ssh_password         = "HelloMoto1239"
   shutdown_command     = "shutdown -P now"
 
-  headless         = true
   skip_compaction  = true
   output_directory = "output_dir"
   boot_command     = ["<esc><wait>linux /casper/vmlinuz quiet autoinstall <enter>"]
