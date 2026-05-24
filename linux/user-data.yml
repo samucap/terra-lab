@@ -1,0 +1,19 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  identity:
+    hostname: ubuntu-hardened
+    username: samworker
+    password: "HelloMoto1239"
+  ssh:
+    install-server: true
+    allow-pw: false
+  packages:
+    - ufw
+    - fail2ban
+    - lynis
+    - unattended-upgrades
+    - apparmor
