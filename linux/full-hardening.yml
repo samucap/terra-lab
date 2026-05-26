@@ -1,5 +1,4 @@
----
-- name: Full Linux Hardening Playbook (Evolution of Your Original Script)
+- name: Full Linux Hardening Playbook
   hosts: all
   become: yes
   tasks:
