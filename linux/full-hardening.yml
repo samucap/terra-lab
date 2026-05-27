@@ -1,15 +1,19 @@
-- name: Full Linux Hardening Playbook
+- name: Hardening for Fusion Lab
   hosts: all
   become: yes
+  vars:
+    worker_user: "{{ worker_user | default('samworker') }}"
+    allowed_subnet: "{{ allowed_subnet | default('192.168.1.0/24') }}"
+    ssh_public_key: "{{ ssh_public_key }}"
+
   tasks:
-    - name: Update and upgrade system
+    - name: Update system
       apt:
         update_cache: yes
         upgrade: dist
         autoremove: yes
-        autoclean: yes
 
-    - name: Install security packages
+    - name: Install security tools
       apt:
         name:
           - ufw
@@ -17,41 +21,45 @@
           - lynis
           - unattended-upgrades
           - apparmor
-          - curl
         state: present
 
-    - name: Create worker user (samworker)
+    - name: Create worker user
       user:
-        name: samworker
-        groups: sudo
+        name: "{{ worker_user }}"
         shell: /bin/bash
+        groups: sudo
+        append: yes
         create_home: yes
 
-    - name: Give sudo privileges without password
+    - name: Inject SSH Public Key
+      authorized_key:
+        user: "{{ worker_user }}"
+        key: "{{ ssh_public_key }}"
+        state: present
+
+    - name: Passwordless sudo
       copy:
-        content: "samworker ALL=(ALL) NOPASSWD:ALL"
-        dest: /etc/sudoers.d/samworker
+        content: "{{ worker_user }} ALL=(ALL) NOPASSWD:ALL"
+        dest: "/etc/sudoers.d/{{ worker_user }}"
         mode: "0440"
 
-    - name: Disable root SSH login
+    - name: Disable root SSH
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "^PermitRootLogin"
         line: "PermitRootLogin no"
-        state: present
 
-    - name: Disable password authentication (key only)
+    - name: Enforce key-only auth
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "^PasswordAuthentication"
         line: "PasswordAuthentication no"
-        state: present
 
-    - name: Setup UFW firewall
+    - name: Setup UFW
       community.general.ufw:
         rule: allow
         port: "22"
-        from_ip: "192.168.1.6/24" # ← Change to your local network
+        from_ip: "{{ allowed_subnet }}"
       notify: Enable UFW
 
     - name: Enable Fail2Ban
@@ -60,8 +68,8 @@
         state: started
         enabled: yes
 
-    - name: Run Lynis baseline audit
-      command: lynis audit system --quiet --logfile /var/log/lynis-build.log
+    - name: Lynis Audit
+      command: lynis audit system --quiet --logfile /var/log/lynis.log
       changed_when: false
 
   handlers:
@@ -71,4 +79,3 @@
       service:
         name: ssh
         state: restarted
-
