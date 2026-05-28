@@ -2,23 +2,20 @@ require 'dotenv'
 Dotenv.load('.env')
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "bento/ubuntu-26.04"
+  config.vm.box = "cloud-image/ubuntu-26.04"
+  config.vm.hostname = ENV['HOSTNAME']
 
   # === VMware Fusion 26H1 Specific Configuration ===
-  config.vm.provider "vmware_desktop" do |v|
-    v.vmx["numvcpus"] = "4"
-    v.vmx["memsize"]  = "8192"
-    v.gui = false
-
-    v.vmx["firmware"] = "bios"
-    v.vmx["ethernet0.virtualDev"] = "vmxnet3"
-    v.vmx["scsi0.virtualDev"] = "pvscsi"
-    v.vmx["vmci0.present"] = "TRUE"
-    v.vmx["encryption.encrypted"] = "TRUE"
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "ubuntu26-hardened-{Time.now.to_i}"
+    vb.memory = "8192"
+    vb.cpus = 4
+    vb.customize ["modifyvm", :id, "--firmware", "EFI"]
   end
 
-  config.ssh.insert_key = false
-  config.ssh.private_key_path = ENV['SSH_PVK']
+  config.ssh.username = "vagrant"
+  config.ssh.insert_key = true
+  config.ssh.private_key_path = nil
 
   # Main Hardening via Ansible
   config.vm.provision "ansible" do |ansible|
@@ -26,7 +23,8 @@ Vagrant.configure("2") do |config|
     ansible.extra_vars = {
       worker_user: ENV['WORKER_USER'],
       allowed_subnet: ENV['ALLOWED_SUBNET'],
-      ssh_public_key: File.read(ENV['SSH_PBK']).strip
+      ssh_public_key: File.read(ENV['SSH_PBK']).strip,
+      hostname: ENV['HOSTNAME']
     }
   end
 

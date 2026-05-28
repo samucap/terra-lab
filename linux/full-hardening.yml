@@ -2,11 +2,16 @@
   hosts: all
   become: yes
   vars:
-    worker_user: "{{ worker_user | default('samworker') }}"
-    allowed_subnet: "{{ allowed_subnet | default('192.168.1.0/24') }}"
+    worker_user: "{{ worker_user | default('worker') }}"
+    allowed_subnet: "{{ allowed_subnet }}"
     ssh_public_key: "{{ ssh_public_key }}"
 
   tasks:
+    - name: Set system hostname
+      hostname:
+        name: "{{ hostname }}"
+      when: hostname is defined
+
     - name: Update system
       apt:
         update_cache: yes
@@ -36,6 +41,7 @@
         user: "{{ worker_user }}"
         key: "{{ ssh_public_key }}"
         state: present
+        manage_dir: yes
 
     - name: Passwordless sudo
       copy:
