@@ -1,0 +1,29 @@
+require 'dotenv'
+Dotenv.load('.env')
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "cloud-image/ubuntu-26.04"
+  config.vm.hostname = ENV['HOSTNAME']
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "ubuntu26-hardened-#{Time.now.to_i}"
+    vb.memory = "8192"
+    vb.cpus = 4
+    vb.customize ["modifyvm", :id, "--firmware", "EFI"]
+  end
+
+  # Main Hardening via Ansible
+  config.vm.provision "ansible" do |ansible|
+    ansible.playbook = "full-hardening.yml"
+    ansible.extra_vars = {
+      worker_user: ENV['WORKER_USER'],
+      worker_passwd: ENV['WORKER_PASSWD'],
+      allowed_subnet: ENV['ALLOWED_SUBNET'],
+      ssh_public_key: File.read(ENV['SSH_PBK']).strip,
+      hostname: ENV['HOSTNAME']
+    }
+  end
+
+  # SSH Port Forward (for easy access)
+  config.vm.network "forwarded_port", guest: 22, host: 2222, host_ip: "127.0.0.1", id: "ssh"
+end
