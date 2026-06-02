@@ -5,8 +5,23 @@
     worker_user: "{{ worker_user | default('worker') }}"
     allowed_subnet: "{{ allowed_subnet }}"
     ssh_public_key: "{{ ssh_public_key }}"
+    worker_passwd: "{{ worker_passwd }}"
 
   tasks:
+    - name: Preflight validation
+      assert:
+        that:
+          - worker_passwd | length > 0
+          - ssh_public_key | length > 0
+          - ssh_public_key is search('^ssh-')
+          - allowed_subnet | length > 0
+          - allowed_subnet is search('/')
+        fail_msg: >-
+          Missing or invalid required variables. Ensure .env has:
+          WORKER_PASSWD (non-empty),
+          SSH_PBK (valid public key file starting with ssh-),
+          ALLOWED_SUBNET (CIDR notation like 10.0.2.0/24)
+
     - name: Set system hostname
       hostname:
         name: "{{ hostname }}"
@@ -31,6 +46,7 @@
     - name: Create worker user
       user:
         name: "{{ worker_user }}"
+        password: "{{ worker_passwd | password_hash('sha512') }}"
         shell: /bin/bash
         groups: sudo
         append: yes
