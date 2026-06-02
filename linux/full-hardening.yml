@@ -42,24 +42,21 @@
         key: "{{ ssh_public_key }}"
         state: present
         manage_dir: yes
-
-    - name: Passwordless sudo
-      copy:
-        content: "{{ worker_user }} ALL=(ALL) NOPASSWD:ALL"
-        dest: "/etc/sudoers.d/{{ worker_user }}"
-        mode: "0440"
+      notify: Restart SSH
 
     - name: Disable root SSH
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "^PermitRootLogin"
         line: "PermitRootLogin no"
+      notify: Restart SSH
 
     - name: Enforce key-only auth
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "^PasswordAuthentication"
         line: "PasswordAuthentication no"
+      notify: Restart SSH
 
     - name: Setup UFW
       community.general.ufw:

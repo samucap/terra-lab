@@ -5,9 +5,8 @@ Vagrant.configure("2") do |config|
   config.vm.box = "cloud-image/ubuntu-26.04"
   config.vm.hostname = ENV['HOSTNAME']
 
-  # === VMware Fusion 26H1 Specific Configuration ===
   config.vm.provider "virtualbox" do |vb|
-    vb.name = "ubuntu26-hardened-{Time.now.to_i}"
+    vb.name = "ubuntu26-hardened-#{Time.now.to_i}"
     vb.memory = "8192"
     vb.cpus = 4
     vb.customize ["modifyvm", :id, "--firmware", "EFI"]
@@ -15,7 +14,6 @@ Vagrant.configure("2") do |config|
 
   config.ssh.username = "vagrant"
   config.ssh.insert_key = true
-  config.ssh.private_key_path = nil
 
   # Main Hardening via Ansible
   config.vm.provision "ansible" do |ansible|
@@ -26,6 +24,14 @@ Vagrant.configure("2") do |config|
       ssh_public_key: File.read(ENV['SSH_PBK']).strip,
       hostname: ENV['HOSTNAME']
     }
+  end
+
+  # After provisioning, switch SSH to worker user so `vagrant ssh` uses it
+  config.trigger.after :provision do |trigger|
+    trigger.ruby do |env, machine|
+      machine.config.ssh.username = ENV['WORKER_USER']
+      machine.config.ssh.private_key_path = ENV['SSH_PVK']
+    end
   end
 
   # SSH Port Forward (for easy access)
