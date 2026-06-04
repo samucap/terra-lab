@@ -12,6 +12,10 @@ Vagrant.configure("2") do |config|
   config.vm.box_url = "file://#{File.expand_path('output-desktop/buntoo2604-desk.box', __dir__)}"
   config.vm.hostname = ENV['HOSTNAME'] || "buntoo2604-desk"
 
+  # ---- SSH Authentication ----
+  config.ssh.username = ENV['INITIAL_USER'] || "samworker"
+  config.ssh.insert_key = true
+
   # Disable default synced folder (security)
   config.vm.synced_folder ".", "/vagrant", disabled: true
 

@@ -146,14 +146,19 @@ source "vmware-iso" "ubuntu-desktop" {
 build {
   sources = ["source.vmware-iso.ubuntu-desktop"]
 
-  # --- Stage 1: Bootstrap for Ansible ---
+  # --- Stage 1: Bootstrap for Ansible & Vagrant SSH ---
   provisioner "shell" {
     execute_command = "echo '${var.ssh_password}' | sudo -S bash -c '{{ .Path }}'"
     inline = [
       "cloud-init status --wait || true",
       "apt-get update -qq",
-      "apt-get install -y -qq python3 python3-apt openssh-server",
-      "systemctl enable --now ssh"
+      "apt-get install -y -qq python3 python3-apt openssh-server curl",
+      "systemctl enable --now ssh",
+      "mkdir -p /home/${var.initial_user}/.ssh",
+      "curl -sL https://raw.githubusercontent.com/hashicorp/vagrant/master/keys/vagrant.pub -o /home/${var.initial_user}/.ssh/authorized_keys",
+      "chown -R ${var.initial_user}:${var.initial_user} /home/${var.initial_user}/.ssh",
+      "chmod 700 /home/${var.initial_user}/.ssh",
+      "chmod 600 /home/${var.initial_user}/.ssh/authorized_keys"
     ]
   }
 
