@@ -2,11 +2,13 @@ require 'dotenv'
 Dotenv.load('.env')
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "cloud-image/ubuntu-26.04"
+  config.vm.box = "bento/ubuntu-26.04"
+  config.vm.box_version = "202606.01.0"
   config.vm.hostname = ENV['HOSTNAME']
+  config.vm.synced_folder ".", "/vagrant", disabled: true
 
   config.vm.provider "virtualbox" do |vb|
-    vb.name = "ubuntu26-hardened-#{Time.now.to_i}"
+    vb.name = "buntoo-#{Time.now.to_i}"
     vb.memory = "8192"
     vb.cpus = 4
     vb.customize ["modifyvm", :id, "--firmware", "EFI"]

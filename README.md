@@ -2,9 +2,9 @@
 
 ## in ./linux automating virtual machines setup
 
-    * Vagrant, ansible
-    * automating spinning up local vms for rapid reusability
-        - hardened w/ security features and configurable via vagrant/ansible configs
+    * Vagrant, ansible, packer
+    * automating spinning up local vms for rapid setup/teardown/rebuild for labs, sandboxes, malware analysis, etc.
+        - hardened w/ security features and configurable via scripts (ansible, vagrant, packer, etc.)
     * to run: cd ./linux && vagrant up --provider=virtualbox
 
 #### Dependencies
@@ -21,3 +21,4 @@
     - verify installation and lynis initial audit
     - need to snapshot initial processes, so can keep record of truth
     - need to set user password
+    - add the option for vagrant to clone something that speeds up build

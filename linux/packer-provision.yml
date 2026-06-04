@@ -1,0 +1,335 @@
+---
+# =============================================================================
+# packer-provision.yml — Bake-time hardening + desktop environment
+# Run by Packer's Ansible provisioner during golden image creation.
+# Mirrors full-hardening.yml security baseline + Ghidra-optimized desktop.
+# =============================================================================
+
+- name: "Packer Provision: Hardened Ubuntu Desktop for RE/Ghidra"
+  hosts: all
+  become: yes
+  vars:
+    initial_user: "{{ initial_user | default('samworker') }}"
+    allowed_subnet: "{{ allowed_subnet | default('192.168.1.0/24') }}"
+
+  tasks:
+    # -----------------------------------------------------------------
+    # System Update
+    # -----------------------------------------------------------------
+    - name: Dist-upgrade and clean
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    # -----------------------------------------------------------------
+    # Security Tooling
+    # -----------------------------------------------------------------
+    - name: Install security tools
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - lynis
+          - unattended-upgrades
+          - apparmor
+          - apparmor-utils
+          - auditd
+          - audispd-plugins
+          - aide
+          - rkhunter
+          - libpam-pwquality
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    # -----------------------------------------------------------------
+    # Desktop Environment — Ubuntu Desktop Minimal + Ghidra deps
+    # ubuntu-desktop-minimal gives GNOME without bloat; optimal for
+    # RE workloads where you need a responsive GUI, not a media center.
+    # -----------------------------------------------------------------
+    - name: Install desktop environment
+      apt:
+        name:
+          - ubuntu-desktop-minimal
+          - gnome-terminal
+          - dbus-x11
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Install Ghidra prerequisites (JDK 21 + tooling)
+      apt:
+        name:
+          - openjdk-21-jdk
+          - openjdk-21-jdk-headless
+          - git
+          - wget
+          - unzip
+          - build-essential
+          - cmake
+          - python3-pip
+          - python3-venv
+          - gdb
+          - binutils
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Set JAVA_HOME system-wide
+      copy:
+        content: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64
+          export PATH=$JAVA_HOME/bin:$PATH
+        dest: /etc/profile.d/java.sh
+        mode: "0644"
+
+    - name: Set default display manager to GDM
+      debconf:
+        name: gdm3
+        question: shared/default-x-display-manager
+        vtype: select
+        value: gdm3
+      ignore_errors: yes
+
+    # -----------------------------------------------------------------
+    # Kernel Hardening — sysctl
+    # -----------------------------------------------------------------
+    - name: Apply kernel hardening parameters
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_set: yes
+        state: present
+        reload: yes
+      loop:
+        - { key: "kernel.randomize_va_space", value: "2" }                    # Full ASLR
+        - { key: "kernel.kptr_restrict", value: "2" }                         # Hide kernel pointers
+        - { key: "kernel.dmesg_restrict", value: "1" }                        # Restrict dmesg
+        - { key: "kernel.yama.ptrace_scope", value: "1" }                     # Restrict ptrace
+        - { key: "net.ipv4.tcp_syncookies", value: "1" }                      # SYN flood protection
+        - { key: "net.ipv4.conf.all.rp_filter", value: "1" }                  # Reverse path filtering
+        - { key: "net.ipv4.conf.default.rp_filter", value: "1" }
+        - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }           # No ICMP redirects
+        - { key: "net.ipv4.conf.default.accept_redirects", value: "0" }
+        - { key: "net.ipv6.conf.all.accept_redirects", value: "0" }
+        - { key: "net.ipv6.conf.default.accept_redirects", value: "0" }
+        - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+        - { key: "net.ipv4.conf.default.send_redirects", value: "0" }
+        - { key: "net.ipv4.conf.all.accept_source_route", value: "0" }        # No source routing
+        - { key: "net.ipv4.conf.default.accept_source_route", value: "0" }
+        - { key: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }         # Smurf protection
+        - { key: "net.ipv4.icmp_ignore_bogus_error_responses", value: "1" }
+        - { key: "fs.suid_dumpable", value: "0" }                             # No core dumps from SUID
+        - { key: "fs.protected_hardlinks", value: "1" }
+        - { key: "fs.protected_symlinks", value: "1" }
+
+    # -----------------------------------------------------------------
+    # SSH Hardening
+    # -----------------------------------------------------------------
+    - name: Harden SSH configuration
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED — PACKER HARDENING"
+        block: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          MaxAuthTries 3
+          MaxSessions 3
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+          X11Forwarding no
+          AllowAgentForwarding no
+          AllowTcpForwarding no
+          PermitEmptyPasswords no
+          LoginGraceTime 30
+          Protocol 2
+      notify: Restart SSH
+
+    # -----------------------------------------------------------------
+    # File Permission Hardening
+    # -----------------------------------------------------------------
+    - name: Harden sensitive file permissions
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/etc/passwd", mode: "0644" }
+        - { path: "/etc/shadow", mode: "0640" }
+        - { path: "/etc/gshadow", mode: "0640" }
+        - { path: "/etc/group", mode: "0644" }
+
+    # -----------------------------------------------------------------
+    # Unattended Upgrades — auto security patches
+    # -----------------------------------------------------------------
+    - name: Configure unattended-upgrades
+      copy:
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+              "${distro_id}ESMApps:${distro_codename}-apps-security";
+          };
+          Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        mode: "0644"
+
+    - name: Enable auto-updates
+      copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+
+    # -----------------------------------------------------------------
+    # AppArmor Enforcement
+    # -----------------------------------------------------------------
+    - name: Ensure AppArmor is enabled and enforcing
+      service:
+        name: apparmor
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # Audit Framework (auditd)
+    # -----------------------------------------------------------------
+    - name: Configure audit rules
+      copy:
+        content: |
+          # Monitor auth files
+          -w /etc/passwd -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/group -p wa -k identity
+          -w /etc/gshadow -p wa -k identity
+          -w /etc/sudoers -p wa -k sudoers
+          -w /etc/sudoers.d/ -p wa -k sudoers
+          # Monitor SSH config
+          -w /etc/ssh/sshd_config -p wa -k sshd_config
+          # Monitor login/logout
+          -w /var/log/auth.log -p wa -k auth_log
+          -w /var/log/faillog -p wa -k login_failures
+          # Monitor kernel modules
+          -w /sbin/insmod -p x -k kernel_modules
+          -w /sbin/rmmod -p x -k kernel_modules
+          -w /sbin/modprobe -p x -k kernel_modules
+        dest: /etc/audit/rules.d/hardening.rules
+        mode: "0640"
+      notify: Restart auditd
+
+    - name: Enable auditd
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # Disable Unnecessary Services
+    # -----------------------------------------------------------------
+    - name: Disable unnecessary network services
+      service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - cups-browsed
+        - avahi-daemon
+      ignore_errors: yes
+
+    # -----------------------------------------------------------------
+    # Firewall (UFW)
+    # -----------------------------------------------------------------
+    - name: UFW — default deny incoming
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: UFW — default allow outgoing
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: UFW — allow SSH from trusted subnet
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        from_ip: "{{ allowed_subnet }}"
+
+    - name: Enable UFW
+      command: ufw --force enable
+
+    # -----------------------------------------------------------------
+    # Fail2Ban
+    # -----------------------------------------------------------------
+    - name: Configure fail2ban jail
+      copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          maxretry = 5
+          bantime = 3600
+          findtime = 600
+        dest: /etc/fail2ban/jail.local
+        mode: "0644"
+      notify: Restart fail2ban
+
+    - name: Enable fail2ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # AIDE — installed but database init deferred to post-deploy
+    # aideinit hangs during Packer builds on desktop installs due to
+    # the massive filesystem + virtualized disk I/O. Run manually:
+    #   sudo aideinit
+    # -----------------------------------------------------------------
+
+    # -----------------------------------------------------------------
+    # Password Policy (PAM)
+    # -----------------------------------------------------------------
+    - name: Set password quality requirements
+      lineinfile:
+        path: /etc/security/pwquality.conf
+        regexp: "^{{ item.key }}"
+        line: "{{ item.key }} = {{ item.value }}"
+      loop:
+        - { key: "minlen", value: "12" }
+        - { key: "dcredit", value: "-1" }
+        - { key: "ucredit", value: "-1" }
+        - { key: "lcredit", value: "-1" }
+        - { key: "ocredit", value: "-1" }
+        - { key: "maxrepeat", value: "3" }
+
+    # -----------------------------------------------------------------
+    # Lynis Audit (logged, non-blocking)
+    # -----------------------------------------------------------------
+    - name: Run Lynis audit
+      command: lynis audit system --quiet --logfile /var/log/lynis-build.log
+      changed_when: false
+      ignore_errors: yes
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Restart auditd
+      service:
+        name: auditd
+        state: restarted
+
+    - name: Restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted

@@ -1,4 +1,4 @@
-- name: Hardening for Fusion Lab
+- name: Hardening for Lab
   hosts: all
   become: yes
   vars:

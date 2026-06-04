@@ -6,6 +6,7 @@
 inventory.ini
 *.env
 *.env.local
-*/.vagrant
+**/.vagrant
 .env
 .git
+**/output*
