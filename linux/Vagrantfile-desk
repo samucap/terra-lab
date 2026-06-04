@@ -1,0 +1,55 @@
+# =============================================================================
+# Vagrantfile-desk — VMware Fusion desktop VM from Packer golden image
+# Usage: VAGRANT_VAGRANTFILE=Vagrantfile-desk vagrant up
+# =============================================================================
+
+require 'dotenv'
+Dotenv.load('.env')
+
+Vagrant.configure("2") do |config|
+  # ---- Box: Packer-built hardened desktop image ----
+  config.vm.box = "buntoo2604-desk"
+  config.vm.box_url = "file://#{File.expand_path('output-desktop/buntoo2604-desk.box', __dir__)}"
+  config.vm.hostname = ENV['HOSTNAME'] || "buntoo2604-desk"
+
+  # ---- SSH Authentication ----
+  config.ssh.username = ENV['INITIAL_USER'] || "samworker"
+  config.ssh.insert_key = true
+
+  # Disable default synced folder (security)
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # ---- VMware Fusion Provider ----
+  config.vm.provider "vmware_desktop" do |vmw|
+    vmw.vmx["displayname"] = "buntoo2604-desk-#{Time.now.to_i}"
+    vmw.vmx["memsize"] = "8192"
+    vmw.vmx["numvcpus"] = "4"
+    vmw.vmx["firmware"] = "efi"
+
+    # Desktop: enable GUI, 3D acceleration, retina
+    vmw.gui = true
+    vmw.vmx["svga.autodetect"] = "true"
+    vmw.vmx["mks.enable3d"] = "true"
+    vmw.vmx["gui.fitGuestUsingNativeDisplayResolution"] = "true"
+
+    # USB passthrough (for hardware RE tools)
+    vmw.vmx["usb.present"] = "true"
+    vmw.vmx["ehci.present"] = "true"
+  end
+
+  # ---- First-Boot Provisioning via Ansible ----
+  config.vm.provision "ansible" do |ansible|
+    ansible.playbook = "desktop-provision.yml"
+    ansible.extra_vars = {
+      worker_user: ENV['WORKER_USER'],
+      worker_passwd: ENV['WORKER_PASSWD'],
+      allowed_subnet: ENV['ALLOWED_SUBNET'],
+      ssh_public_key: File.read(ENV['SSH_PBK']).strip,
+      hostname: ENV['HOSTNAME']
+    }
+  end
+
+  # ---- Network ----
+  # SSH forward on 2223 to avoid collision with bento box on 2222
+  config.vm.network "forwarded_port", guest: 22, host: 2223, host_ip: "127.0.0.1", id: "ssh"
+end

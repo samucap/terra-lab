@@ -1,0 +1,150 @@
+---
+# =============================================================================
+# desktop-provision.yml — Vagrant first-boot provisioning
+# Run by Vagrant's Ansible provisioner on `vagrant up`. Handles runtime
+# personalisation that should NOT be baked into the golden image.
+# =============================================================================
+
+- name: "First-Boot: Desktop Runtime Configuration"
+  hosts: all
+  become: yes
+  vars:
+    worker_user: "{{ worker_user | default('worker') }}"
+    worker_passwd: "{{ worker_passwd }}"
+    ssh_public_key: "{{ ssh_public_key }}"
+    allowed_subnet: "{{ allowed_subnet }}"
+    hostname: "{{ hostname | default('buntoo2604-desk') }}"
+
+  tasks:
+    # -----------------------------------------------------------------
+    # Baseline Verification — confirm hardening survived image import
+    # -----------------------------------------------------------------
+    - name: Verify UFW is active
+      command: ufw status
+      register: ufw_status
+      changed_when: false
+
+    - name: Assert UFW is active
+      assert:
+        that: "'Status: active' in ufw_status.stdout"
+        fail_msg: "UFW is not active — hardening baseline broken"
+
+    - name: Verify fail2ban is running
+      service_facts:
+
+    - name: Assert fail2ban service
+      assert:
+        that: "'fail2ban.service' in ansible_facts.services and ansible_facts.services['fail2ban.service'].state == 'running'"
+        fail_msg: "fail2ban is not running — hardening baseline broken"
+      ignore_errors: yes
+
+    - name: Verify root SSH is disabled
+      command: grep -E '^PermitRootLogin\s+no' /etc/ssh/sshd_config
+      changed_when: false
+
+    # -----------------------------------------------------------------
+    # Hostname
+    # -----------------------------------------------------------------
+    - name: Set system hostname
+      hostname:
+        name: "{{ hostname }}"
+
+    # -----------------------------------------------------------------
+    # Worker User — rotate password, inject fresh SSH key
+    # -----------------------------------------------------------------
+    - name: Create/update worker user
+      user:
+        name: "{{ worker_user }}"
+        password: "{{ worker_passwd | password_hash('sha512') }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+        create_home: yes
+
+    - name: Inject SSH public key for worker
+      authorized_key:
+        user: "{{ worker_user }}"
+        key: "{{ ssh_public_key }}"
+        state: present
+        manage_dir: yes
+
+    - name: Grant worker passwordless sudo
+      copy:
+        content: "{{ worker_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        dest: "/etc/sudoers.d/{{ worker_user }}"
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    # -----------------------------------------------------------------
+    # UFW — ensure allowed_subnet is current
+    # -----------------------------------------------------------------
+    - name: UFW — allow SSH from configured subnet
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        from_ip: "{{ allowed_subnet }}"
+
+    # -----------------------------------------------------------------
+    # Desktop Tools — user-facing applications
+    # -----------------------------------------------------------------
+    - name: Install desktop productivity tools
+      apt:
+        name:
+          - firefox
+          - file-roller
+          - gnome-tweaks
+          - vim
+          - tmux
+          - htop
+          - net-tools
+          - tree
+        state: present
+        update_cache: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    # -----------------------------------------------------------------
+    # GNOME Configuration — privacy & UX defaults
+    # -----------------------------------------------------------------
+    - name: Set GNOME dark theme (system-wide dconf)
+      copy:
+        content: |
+          [org/gnome/desktop/interface]
+          color-scheme='prefer-dark'
+          gtk-theme='Yaru-dark'
+
+          [org/gnome/desktop/privacy]
+          remember-recent-files=false
+          remove-old-trash-files=true
+          old-files-age=uint32 7
+
+          [org/gnome/desktop/session]
+          idle-delay=uint32 300
+
+          [org/gnome/desktop/screensaver]
+          lock-enabled=true
+          lock-delay=uint32 0
+        dest: /etc/dconf/db/local.d/01-hardened-defaults
+        mode: "0644"
+      notify: Update dconf
+
+    - name: Create dconf locks for security settings
+      copy:
+        content: |
+          /org/gnome/desktop/screensaver/lock-enabled
+          /org/gnome/desktop/screensaver/lock-delay
+        dest: /etc/dconf/db/local.d/locks/security
+        mode: "0644"
+      notify: Update dconf
+
+    # -----------------------------------------------------------------
+    # Final Lynis Audit
+    # -----------------------------------------------------------------
+    - name: Run final Lynis audit
+      command: lynis audit system --quiet --logfile /var/log/lynis-firstboot.log
+      changed_when: false
+      ignore_errors: yes
+
+  handlers:
+    - name: Update dconf
+      command: dconf update

@@ -1,0 +1,100 @@
+- name: Hardening for Lab
+  hosts: all
+  become: yes
+  vars:
+    worker_user: "{{ worker_user | default('worker') }}"
+    allowed_subnet: "{{ allowed_subnet }}"
+    ssh_public_key: "{{ ssh_public_key }}"
+    worker_passwd: "{{ worker_passwd }}"
+
+  tasks:
+    - name: Preflight validation
+      assert:
+        that:
+          - worker_passwd | length > 0
+          - ssh_public_key | length > 0
+          - ssh_public_key is search('^ssh-')
+          - allowed_subnet | length > 0
+          - allowed_subnet is search('/')
+        fail_msg: >-
+          Missing or invalid required variables. Ensure .env has:
+          WORKER_PASSWD (non-empty),
+          SSH_PBK (valid public key file starting with ssh-),
+          ALLOWED_SUBNET (CIDR notation like 10.0.2.0/24)
+
+    - name: Set system hostname
+      hostname:
+        name: "{{ hostname }}"
+      when: hostname is defined
+
+    - name: Update system
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+
+    - name: Install security tools
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - lynis
+          - unattended-upgrades
+          - apparmor
+        state: present
+
+    - name: Create worker user
+      user:
+        name: "{{ worker_user }}"
+        password: "{{ worker_passwd | password_hash('sha512') }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+        create_home: yes
+
+    - name: Inject SSH Public Key
+      authorized_key:
+        user: "{{ worker_user }}"
+        key: "{{ ssh_public_key }}"
+        state: present
+        manage_dir: yes
+      notify: Restart SSH
+
+    - name: Disable root SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+      notify: Restart SSH
+
+    - name: Enforce key-only auth
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      notify: Restart SSH
+
+    - name: Setup UFW
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        from_ip: "{{ allowed_subnet }}"
+      notify: Enable UFW
+
+    - name: Enable Fail2Ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: Lynis Audit
+      command: lynis audit system --quiet --logfile /var/log/lynis.log
+      changed_when: false
+
+  handlers:
+    - name: Enable UFW
+      command: ufw --force enable
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
