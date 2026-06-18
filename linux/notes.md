@@ -31,7 +31,7 @@ injection, desktop tweaks) that shouldn't live in the image.
 
 | File | Purpose |
 |------|---------|
-| `fusion-ubuntu-template.pkr.hcl` | Packer template — builds the golden `.box` image |
+| `ubuntu-template.pkr.hcl` | Packer template — builds the golden `.box` image |
 | `packer.sh` | Wrapper script — loads `.env` and runs Packer (no manual exports) |
 | `meta-data.yml` | Cloud-init metadata (instance ID) |
 | `user-data.yml` | Cloud-init autoinstall (unattended OS install) |
@@ -74,10 +74,10 @@ automatically — it sources `.env` and maps vars to `PKR_VAR_*` before calling
 cd linux
 
 # Install Packer plugins (first time only)
-packer init fusion-ubuntu-template.pkr.hcl
+packer init ubuntu-template.pkr.hcl
 
 # Build — reads all vars from .env automatically
-./packer.sh build fusion-ubuntu-template.pkr.hcl
+./packer.sh build ubuntu-template.pkr.hcl
 ```
 
 Output: `output-desktop/buntoo2604-desk.box`
@@ -467,7 +467,7 @@ cd linux
 rm -rf output-desktop/
 
 # Rebuild
-./packer.sh build fusion-ubuntu-template.pkr.hcl
+./packer.sh build ubuntu-template.pkr.hcl
 
 # Replace Vagrant box
 vagrant box remove buntoo2604-desk 2>/dev/null

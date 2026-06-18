@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # packer.sh — wrapper that loads .env and runs packer with mapped variables
-# Usage: ./packer.sh build fusion-ubuntu-template.pkr.hcl
-#        ./packer.sh validate fusion-ubuntu-template.pkr.hcl
+# Usage: ./packer.sh build ubuntu-template.pkr.hcl
+#        ./packer.sh validate ubuntu-template.pkr.hcl
 # =============================================================================
 set -euo pipefail
 
