@@ -3,14 +3,24 @@
   hosts: all
   become: yes
   vars:
-    machine_type: "{{ machine_type | default('server') }}"   # server | desktop
-    desktop_env: "{{ desktop_env | default('gnome') }}"    # gnome | kde
-    install_ghidra_deps: "{{ install_ghidra_deps | default(false) }}"
-    allowed_subnet: "{{ allowed_subnet | default('192.168.1.0/24') }}"
-    run_aide_init: "{{ run_aide_init | default(true) }}"
-    run_lynis_audit: "{{ run_lynis_audit | default(true) }}"
-    run_rkhunter: "{{ run_rkhunter | default(true) }}"
-
+    machine_type: "desktop"
+    desktop_env: "kde"
+    install_ghidra_deps: true
+    allowed_subnet: "192.168.1.0/24"
+    run_aide_init: false
+    run_lynis_audit: false
+    run_rkhunter: false
+  pre_tasks:
+    - name: Ensure apt cache is up to date, with retry if mirrors are unavailable
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600 # 1hr
+      register: apt_update
+      until: apt_update is succeeded
+      retries: 5
+      delay: 15
+      environment:
+        DEBIAN_FROENTEND: noninteractive
   tasks:
     # -----------------------------------------------------------------
     # 0. Apt update && upgrade (full upgrade as requested)
@@ -42,9 +52,10 @@
           - git
           - curl
         state: present
-        update_cache: yes
+        update_cache: no
       environment:
         DEBIAN_FRONTEND: noninteractive
+      when: apt_update is succeeded
 
     # -----------------------------------------------------------------
     # 2. Desktop environment – conditional
@@ -135,6 +146,16 @@
         - { key: "fs.protected_symlinks", value: "1" }
 
     # -----------------------------------------------------------------
+    # 5. Install OpenSSH server
+    # -----------------------------------------------------------------
+    - name: Install OpenSSH server
+      apt:
+        name: openssh-server
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    # -----------------------------------------------------------------
     # 5. SSH hardening (no pre‑flight key check as per user request)
     # -----------------------------------------------------------------
     - name: Harden SSH configuration
@@ -155,6 +176,7 @@
           PermitEmptyPasswords no
           LoginGraceTime 30
           Protocol 2
+        create: yes
       notify: Restart SSH
 
     # -----------------------------------------------------------------
