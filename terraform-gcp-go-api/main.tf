@@ -110,7 +110,3 @@ module "load_balancer" {
 
   depends_on = [module.cloud_run]
 }
-
-module "compute_eng" {
-  source = "./modules/compute-eng"
-}
