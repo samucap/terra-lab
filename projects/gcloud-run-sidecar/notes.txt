@@ -1,0 +1,80 @@
+Orion env / secrets — lab notes
+================================
+
+Context
+-------
+Cloud Run container "charon-instance" (Orion API) needs the same process env
+names as the app uses locally (JWT_SECRET, POSTGRES_*, etc.). Local app config
+lives in the Orion repo .env; this Terraform stack must not hard-read that path.
+
+
+What we implemented (lab / bootstrap — a bit hacky)
+---------------------------------------------------
+1. Terraform creates Secret Manager secrets + versions from a sensitive map
+   (orion_secrets) and grants the runtime SA secretAccessor.
+2. Cloud Run injects:
+   - secrets via secret_key_ref (env name = map key, e.g. JWT_SECRET)
+   - non-secrets as plain env (orion_env: host, port, JWT_EXPIRY_*, etc.)
+3. PORT is set by Terraform (service_port), not from app .env.
+4. scripts/sync-orion-env.sh <path-to-dotenv>:
+   - allowlists known keys only
+   - writes gitignored secrets.auto.tfvars (mode 600)
+   - runs terraform plan only (never apply)
+5. Operator reviews plan, then runs terraform apply manually.
+
+Secrets (SM):     JWT_SECRET, POSTGRES_PASSWORD, POSTGRES_USER, POSTGRES_DB
+Plain env:        POSTGRES_HOST, POSTGRES_PORT, JWT_EXPIRY_MINUTES,
+                  BCRYPT_COST, AUTH_ENABLED
+Ignore from .env: PORT
+
+Why "hacky"
+-----------
+- Secret values go through Terraform → they end up in state.
+- Deploy is driven from a laptop dotenv + sync script, not CI.
+- POSTGRES_HOST is infra (cloud DB address), not really "copy local .env"
+  (local often uses localhost / docker host). For apply, set the *cloud*
+  host in orion_env / secrets.auto.tfvars, not a local-only address.
+
+
+Operator steps (current)
+------------------------
+  cd projects/gcloud-run-sidecar
+  ./scripts/sync-orion-env.sh /path/to/orion/.env   # plan only
+  terraform apply                                   # manual when plan looks right
+
+  # Or hand-edit secrets.auto.tfvars / terraform.tfvars (gitignored *.tfvars).
+  # See terraform.tfvars.example for key shapes (placeholders only).
+
+
+Industry-standard CI/CD (better; easy to move to later)
+-------------------------------------------------------
+Split write vs wire:
+
+  App change
+    → CI builds/pushes image to Artifact Registry
+    → CI (or vault) writes/updates Secret Manager *values*
+      (gcloud secrets versions add / equivalent — not from laptop .env)
+    → Terraform apply deploys Cloud Run:
+         - image tag from CI
+         - env: secret_key_ref to existing secret *names* only
+         - plain env from TF vars / Cloud SQL outputs (e.g. private IP)
+
+Roles:
+  CI / ops     = own secret *values*
+  Terraform    = own secret *resources/names* (optional) + Cloud Run bindings
+                 + infra config (POSTGRES_HOST from SQL/VPC, not app .env)
+  Local .env   = local dev only; never required in the pipeline
+
+Follow-up simplifications when ready:
+  - Stop putting secret_data in TF (or ignore_changes on versions).
+  - TF only references secret IDs; CI pushes versions.
+  - POSTGRES_HOST as a TF variable / module output.
+  - Drop or demote sync-orion-env.sh for deploys.
+  - Dedicated Cloud Run SA; lock down invoker (not allUsers).
+  - Remote state with encryption if this leaves a single laptop.
+
+
+Do not commit
+-------------
+*.tfvars, *.tfstate, real dotenv files (see repo .gitignore).
+Never put real credentials in this notes file or examples.

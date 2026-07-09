@@ -5,6 +5,10 @@ terraform {
       source  = "registry.terraform.io/hashicorp/google"
       version = "7.38.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6.0"
+    }
   }
 }
 
