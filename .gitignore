@@ -1,4 +1,4 @@
-.terraform
+*.terraform
 *.tfvars
 *.tfvars.json
 *.tfstate
@@ -10,3 +10,4 @@ inventory.ini
 .env
 .git
 **/output*
+*.DS_Store

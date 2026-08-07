@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+keygenAndPW() {
+    # ssh-keygen with secure password generation
+    SECRET=$(openssl rand -base64 24 | tr -d '\n' | pbcopy)
+
+    ssh-keygen -t ed25519 -C "$(git config --global user.email)"
+
+    # add some error handling to verify above succeeded with no errors
+
+    osascript -l Swift -e "import Cocoa
+    let p = NSPasteboard.general
+    p.clearContents()
+    p.setString(\"$SECRET\", forType: .string)
+    p.setString(\"\", forType: NSPasteboard.PasteboardType(\"org.nspasteboard.TransientType\"))
+    p.setString(\"\", forType: NSPasteboard.PasteboardType(\"org.nspasteboard.ConcealedType\"))"
+
+    pbcopy </dev/null
+}

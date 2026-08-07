@@ -1,0 +1,389 @@
+---
+- name: Ubuntu Security Hardening
+  hosts: all
+  become: yes
+  vars:
+    machine_type: "desktop"
+    desktop_env: "kde"
+    install_ghidra_deps: true
+    allowed_subnet: "192.168.1.0/24"
+    run_aide_init: false
+    run_lynis_audit: false
+    run_rkhunter: false
+  pre_tasks:
+    - name: Ensure apt cache is up to date, with retry if mirrors are unavailable
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600 # 1hr
+      register: apt_update
+      until: apt_update is succeeded
+      retries: 5
+      delay: 15
+      environment:
+        DEBIAN_FROENTEND: noninteractive
+  tasks:
+    # -----------------------------------------------------------------
+    # 0. Apt update && upgrade (full upgrade as requested)
+    # -----------------------------------------------------------------
+    - name: Update apt cache and upgrade packages
+      apt:
+        update_cache: yes
+        upgrade: full
+        cache_valid_time: 3600
+
+    # -----------------------------------------------------------------
+    # 1. Core security packages (+ extra utilities)
+    # -----------------------------------------------------------------
+    - name: Install core security and utility packages
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - lynis
+          - unattended-upgrades
+          - apparmor
+          - apparmor-utils
+          - auditd
+          - audispd-plugins
+          - aide
+          - rkhunter
+          - libpam-pwquality
+          - neovim
+          - git
+          - curl
+        state: present
+        update_cache: no
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: apt_update is succeeded
+
+    # -----------------------------------------------------------------
+    # 2. Desktop environment – conditional
+    # -----------------------------------------------------------------
+    - name: Install GNOME desktop when desktop requested
+      apt:
+        name:
+          - ubuntu-desktop-minimal
+          - gnome-terminal
+          - dbus-x11
+        state: present
+      when: machine_type == 'desktop' and desktop_env == 'gnome'
+
+    - name: Install KDE Plasma desktop when requested
+      apt:
+        name:
+          - kde-plasma-desktop
+          - plasma-workspace
+        state: present
+      when: machine_type == 'desktop' and desktop_env == 'kde'
+
+    # -----------------------------------------------------------------
+    # 3. Optional Ghidra prerequisites (JDK 21 + tooling)
+    # -----------------------------------------------------------------
+    - name: Detect JDK architecture suffix
+      set_fact:
+        jdk_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+      when: install_ghidra_deps | bool
+
+    - name: Install Ghidra prerequisites
+      apt:
+        name:
+          - openjdk-21-jdk
+          - openjdk-21-jdk-headless
+          - git
+          - wget
+          - unzip
+          - build-essential
+          - cmake
+          - python3-pip
+          - python3-venv
+          - gdb
+          - binutils
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: install_ghidra_deps | bool
+
+    - name: Set JAVA_HOME system-wide (arch aware)
+      copy:
+        content: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-{{ jdk_arch }}
+          export PATH=$JAVA_HOME/bin:$PATH
+        dest: /etc/profile.d/java.sh
+        mode: "0644"
+      when: install_ghidra_deps | bool
+
+    # -----------------------------------------------------------------
+    # 4. Kernel hardening (sysctl)
+    # -----------------------------------------------------------------
+    - name: Apply kernel hardening parameters
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_set: yes
+        state: present
+        reload: yes
+      loop:
+        - { key: "kernel.randomize_va_space", value: "2" }
+        - { key: "kernel.kptr_restrict", value: "2" }
+        - { key: "kernel.dmesg_restrict", value: "1" }
+        - { key: "kernel.yama.ptrace_scope", value: "1" }
+        - { key: "net.ipv4.tcp_syncookies", value: "1" }
+        - { key: "net.ipv4.conf.all.rp_filter", value: "1" }
+        - { key: "net.ipv4.conf.default.rp_filter", value: "1" }
+        - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }
+        - { key: "net.ipv4.conf.default.accept_redirects", value: "0" }
+        - { key: "net.ipv6.conf.all.accept_redirects", value: "0" }
+        - { key: "net.ipv6.conf.default.accept_redirects", value: "0" }
+        - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+        - { key: "net.ipv4.conf.default.send_redirects", value: "0" }
+        - { key: "net.ipv4.conf.all.accept_source_route", value: "0" }
+        - { key: "net.ipv4.conf.default.accept_source_route", value: "0" }
+        - { key: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }
+        - { key: "net.ipv4.icmp_ignore_bogus_error_responses", value: "1" }
+        - { key: "fs.suid_dumpable", value: "0" }
+        - { key: "fs.protected_hardlinks", value: "1" }
+        - { key: "fs.protected_symlinks", value: "1" }
+
+    # -----------------------------------------------------------------
+    # 5. Install OpenSSH server
+    # -----------------------------------------------------------------
+    - name: Install OpenSSH server
+      apt:
+        name: openssh-server
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    # -----------------------------------------------------------------
+    # 5. SSH hardening (no pre‑flight key check as per user request)
+    # -----------------------------------------------------------------
+    - name: Harden SSH configuration
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED — HARDENING"
+        block: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          MaxAuthTries 3
+          MaxSessions 3
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+          X11Forwarding no
+          AllowAgentForwarding no
+          AllowTcpForwarding no
+          PermitEmptyPasswords no
+          LoginGraceTime 30
+          Protocol 2
+        create: yes
+      notify: Restart SSH
+
+    # -----------------------------------------------------------------
+    # 6. File permission hardening
+    # -----------------------------------------------------------------
+    - name: Harden sensitive file permissions
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/etc/passwd", mode: "0644" }
+        - { path: "/etc/shadow", mode: "0640" }
+        - { path: "/etc/gshadow", mode: "0640" }
+        - { path: "/etc/group", mode: "0644" }
+
+    # -----------------------------------------------------------------
+    # 7. Unattended upgrades (auto security patches)
+    # -----------------------------------------------------------------
+    - name: Configure unattended-upgrades
+      copy:
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+              "${distro_id}ESMApps:${distro_codename}-apps-security";
+          };
+          Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        mode: "0644"
+
+    - name: Enable auto‑updates
+      copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+
+    # -----------------------------------------------------------------
+    # 8. AppArmor enforcement
+    # -----------------------------------------------------------------
+    - name: Ensure AppArmor is enabled and enforcing
+      service:
+        name: apparmor
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # 9. Auditd rules
+    # -----------------------------------------------------------------
+    - name: Install auditd rules file
+      copy:
+        content: |
+          # Monitor auth files
+          -w /etc/passwd -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/group -p wa -k identity
+          -w /etc/gshadow -p wa -k identity
+          -w /etc/sudoers -p wa -k sudoers
+          -w /etc/sudoers.d/ -p wa -k sudoers
+          # Monitor SSH config
+          -w /etc/ssh/sshd_config -p wa -k sshd_config
+          # Monitor login/logout
+          -w /var/log/auth.log -p wa -k auth_log
+          -w /var/log/faillog -p wa -k login_failures
+          # Monitor kernel modules
+          -w /sbin/insmod -p x -k kernel_modules
+          -w /sbin/rmmod -p x -k kernel_modules
+          -w /sbin/modprobe -p x -k kernel_modules
+        dest: /etc/audit/rules.d/hardening.rules
+        mode: "0640"
+      notify: Restart auditd
+
+    - name: Enable and start auditd service
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # 10. Disable unnecessary services
+    # -----------------------------------------------------------------
+    - name: Disable unnecessary network services
+      service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - cups-browsed
+        - avahi-daemon
+      ignore_errors: yes
+
+    # -----------------------------------------------------------------
+    # 11. UFW firewall configuration
+    # -----------------------------------------------------------------
+    - name: Set UFW default deny incoming
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Set UFW default allow outgoing
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Allow SSH from trusted subnet
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        from_ip: "{{ allowed_subnet }}"
+
+    - name: Enable UFW (force)
+      command: ufw --force enable
+
+    # -----------------------------------------------------------------
+    # 12. Fail2Ban configuration (SSH jail only)
+    # -----------------------------------------------------------------
+    - name: Configure Fail2Ban jail for SSH
+      copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          maxretry = 5
+          bantime = 3600
+          findtime = 600
+        dest: /etc/fail2ban/jail.local
+        mode: "0644"
+      notify: Restart fail2ban
+
+    - name: Enable and start Fail2Ban service
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    # -----------------------------------------------------------------
+    # 13. AIDE database initialization (async, 30‑min timeout)
+    # -----------------------------------------------------------------
+    - name: Initialise AIDE database (async, 30 min timeout)
+      command: aideinit
+      async: 1800
+      poll: 0
+      when: run_aide_init | bool
+
+    # -----------------------------------------------------------------
+    # 14. Password quality policy (PAM pwquality)
+    # -----------------------------------------------------------------
+    - name: Set password quality requirements
+      lineinfile:
+        path: /etc/security/pwquality.conf
+        regexp: "^{{ item.key }}"
+        line: "{{ item.key }} = {{ item.value }}"
+      loop:
+        - { key: "minlen", value: "12" }
+        - { key: "dcredit", value: "-1" }
+        - { key: "ucredit", value: "-1" }
+        - { key: "lcredit", value: "-1" }
+        - { key: "ocredit", value: "-1" }
+        - { key: "maxrepeat", value: "3" }
+
+    # -----------------------------------------------------------------
+    # 15. Lynis audit (optional)
+    # -----------------------------------------------------------------
+    - name: Run Lynis audit (optional)
+      command: lynis audit system --quiet --logfile /var/log/lynis-harden.log
+      changed_when: false
+      ignore_errors: yes
+      when: run_lynis_audit | bool
+
+    # -----------------------------------------------------------------
+    # 16. rkhunter baseline scan (optional)
+    # -----------------------------------------------------------------
+    - name: Run rkhunter baseline check
+      command: rkhunter --check --skip-keypress
+      register: rkhunter_output
+      changed_when: false
+      ignore_errors: yes
+      when: run_rkhunter | bool
+
+    - name: Store rkhunter output
+      copy:
+        content: "{{ rkhunter_output.stdout }}"
+        dest: /var/log/rkhunter-harden.log
+        mode: "0644"
+      when: run_rkhunter | bool
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Restart auditd
+      service:
+        name: auditd
+        state: restarted
+
+    - name: Restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
+
+    - name: Update dconf   # only relevant for GNOME desktop
+      command: dconf update
+      when: machine_type == 'desktop' and desktop_env == 'gnome'

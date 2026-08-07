@@ -1,0 +1,37 @@
+project_id         = "notable-dough"
+project_region     = "us-west1"
+ingress_port       = 8080
+service_port       = 8888
+network_id         = "ichi-net"
+subnets            = "ni-net"
+ingress_mount_path = "/etc/nginx/conf.d"
+
+# Cloud SQL (PostgreSQL dev, private IP on network_id)
+# db_instance_name       = "orion-pg-dev"
+# db_version             = "POSTGRES_18"
+# db_tier                = "db-f1-micro"
+# db_disk_size_gb        = 10
+# db_deletion_protection = false
+# db_backup_enabled      = true
+
+# Prefer generating these via: ./scripts/sync-orion-env.sh /path/to/.env
+# That writes secrets.auto.tfvars (gitignored) and runs terraform plan only.
+# Apply remains a separate manual step.
+
+orion_secrets = {
+  JWT_SECRET        = "replace-me"
+  POSTGRES_PASSWORD = "replace-me"
+  POSTGRES_USER     = "replace-me"
+  POSTGRES_DB       = "replace-me"
+}
+
+# POSTGRES_HOST is set automatically from the Cloud SQL private IP (sql.tf).
+# You can omit it here; any value is overridden on apply.
+# POSTGRES_SSLMODE is passed into the Orion (charon) container — the app must honor it.
+orion_env = {
+  POSTGRES_PORT      = "5432"
+  POSTGRES_SSLMODE   = "require"
+  JWT_EXPIRY_MINUTES = "15"
+  BCRYPT_COST        = "12"
+  AUTH_ENABLED       = "true"
+}
